@@ -1,160 +1,119 @@
 # Modern BBS final verification report
 
-Date: 2026-09-15
+Date: 2026-09-15 (updated after task-12; supersedes the task-8 baseline report)
 
 ## Repositories
 
-| Service | Path | Latest commit |
+| Service | Path | Milestone commits (task-9 → task-12) |
 |---|---|---|
-| Common | `/Users/yoophi/project/modern-bbs-common` | `9f34c13 feat: add cross-service contract guards` |
-| Community | `/Users/yoophi/project/modern-bbs-community` | `d54b35d feat: add cross-service contract guards` |
-| Commerce | `/Users/yoophi/project/modern-bbs-commerce` | `b174940 feat: add cross-service contract guards` |
-| Planning/research | `/Users/yoophi/project/modern-bbs` | `403c83d docs: record milestone reviews and commits` |
+| Common | `/Users/yoophi/project/modern-bbs-common` | `a7729b1`, `888c7d4`, `2f2eb72`, `e9e74fb` |
+| Community | `/Users/yoophi/project/modern-bbs-community` | `49ff9bb`, `7eb8b44`, `384941a`, `92bb4b7` |
+| Commerce | `/Users/yoophi/project/modern-bbs-commerce` | `f25703f`, `8235c1b`, `79b43c2`, `29653fb`, `ced361d`, `9f22da3` |
+| Planning/research | `/Users/yoophi/project/modern-bbs` | this report |
 
-## Final verification commands
+## Final verification results (coordinator-run, 2026-09-15)
 
-All three service repos passed:
+All three repos, on their task-12 HEADs:
 
-```bash
-npm run typecheck
-npm test
-npm run build
-npm run lint
-npm run db:generate
-DATABASE_URL=postgres://modern_bbs:modern_bbs@localhost:<service-port>/<service-db> npm run db:migrate
-```
+| Gate | Common | Community | Commerce |
+|---|---|---|---|
+| `npm run build` / `typecheck` | pass | pass | pass |
+| `npm test` with DB up | 19 files / 99 tests pass | 11 files / 52 tests pass | 11 files / 71 pass + 1 skip |
+| `npm test` with DB down | 49 pass + 50 skip (green) | 35 pass + 17 skip (green) | 49 pass + 23 skip (green) |
+| `npm run db:migrate` (re-run) | idempotent | idempotent | idempotent |
+| `npm run db:generate` | no diff | no diff | no diff |
 
-Migration smoke used each repo's `docker-compose.yml` PostgreSQL service.
+PG integration tests skip cleanly without Docker and run fully with `npm run db:up` (host ports 5411/5412/5413). Contract artifacts (`docs/contracts/openapi.json` + JSON Schemas) are kept in route parity with each Hono app by contract tests.
 
-Test counts at final verification:
+## What tasks 9–12 added over the task-8 baseline
 
-| Service | Test files | Tests |
-|---|---:|---:|
-| Common | 4 | 10 |
-| Community | 3 | 7 |
-| Commerce | 3 | 6 |
+1. **task-9 PostgreSQL repository wiring** — application services run on Drizzle/pg repositories behind unchanged ports; transactional use cases (points reserve/commit/release, post/comment writes, checkout/order) commit aggregate changes + outbox rows in a single transaction; `.env`-driven composition (memory/postgres).
+2. **task-10 Persistent outbox/inbox workers** — seq-ordered outbox publisher (claim-safe, retry/backoff, dead-letter), persistent `inbox_events` consumer with `(source, event_id)` dedupe and crash resume; commerce hardened API idempotency with payload fingerprints (`IDEMPOTENCY_CONFLICT`).
+3. **task-11 Contract artifacts** — OpenAPI 3.1 documents + event envelope / canonical error / idempotency JSON Schemas per repo, validated by structural, route-parity and conformance tests.
+4. **task-12 Legacy depth expansion** — see mapping below; remaining backlog explicitly classified in each repo's `docs/legacy-gap-closure.md`.
 
-## Architecture and contracts delivered
-
-Each repo contains:
-
-- Hono HTTP app with `/health` and `/capabilities`.
-- Drizzle PostgreSQL schema and generated migrations.
-- TypeScript build/typecheck/lint/test scripts.
-- `docs/architecture.md` with hexagonal boundaries.
-- `docs/api.md` with service API contract.
-- `docs/contracts.md` with canonical errors, event envelope and idempotency rules.
-- `src/domain/contracts.ts` and `src/application/inbox.ts` for capability and idempotent inbox semantics.
-- Review records under `docs/reviews/`.
-
-## Implemented legacy feature mapping
+## Implemented legacy feature mapping (final)
 
 ### Common
 
-| Legacy area | Implemented target slice |
+| Legacy area | Implemented |
 |---|---|
-| Login/session actor | `POST /identity/verify`, `Actor`, in-memory Identity adapter |
-| Member facts/status | `POST /members`, `GET /members/{id}/facts`, `PATCH /members/{id}/status` |
-| Member lifecycle events | `MemberActivated`, `MemberSuspended`, `MemberWithdrawn`, `MemberAnonymizationRequested` style events |
-| Platform grants | `POST /authorization/grants`, `POST /authorization/decisions`, batch decisions |
-| Points ledger | balance, grant, reserve, commit, release, reverse APIs and tests |
-| Provider seam | service-owned ports and in-memory adapter; provider SDKs excluded from domain/application |
+| Login/session (`g5_member_auto_login`) | login/logout, session list/revoke, refresh sessions; local credential adapter + PG/in-memory |
+| Social profiles (`g5_member_social_profiles`) | external identity link/list/unlink seam (port + adapters; no real OIDC) |
+| Verification (`g5_cert_history`) | email/phone verification cases: create (code, TTL), list, verify with attempt limit; `MemberVerificationChanged` |
+| Member profile | register, facts, status, profile update (displayName/contact/segments) with version bump + lifecycle events |
+| Admin member management | member search/list with status/segment/loginId/displayName filters + pagination |
+| Password recovery | request (token + `PasswordRecoveryRequested` in same tx) / reset (`PasswordResetCompleted`); no real mail |
+| Grants (`g5_auth`, `mb_level`) | platform grants, decisions, batches; legacy mb_level→role mapping adapter seam |
+| Points (`g5_point`) | balance, grant, reserve/commit/release/reverse, transaction paging, reservation expiry sweep, idempotency outcome lookup |
 
 ### Community
 
-| Legacy area | Implemented target slice |
+| Legacy area | Implemented |
 |---|---|
-| Board/group policy | board creation and typed `BoardPolicy` admin APIs |
-| Posts | create/list/search/detail, secret post access, attachment `AssetId` refs |
-| Comments/replies | comment creation/listing with author snapshot |
-| Reactions | one reaction per member/post with duplicate prevention |
-| Moderation | moderation case open/action/delete-post workflow |
-| Membership coupling | local `CommunityMemberProjection`; Common connection as ports only |
-| Points rewards | `PostPublished` and `CommentAdded` outbox events |
+| Groups (`g5_group`, `g5_group_member`) | group create/list/detail, membership upsert/remove (group admin or operator), board group assignment |
+| Boards (`g5_board`) | typed `BoardPolicy` create/patch, copy, soft delete, capability-enriched list/detail |
+| Posts | create/list/detail/search (multi-board via `boardIds`), revise, soft delete, notices, categories, reply threading (`parentPostId`), secret posts, attachment `AssetId` refs, view counts |
+| Autosave (`g5_autosave`) | per-member draft save/fetch |
+| Link clicks | external link click recording per (post, url) |
+| Comments | create/reply/list, revise, soft delete; author snapshots |
+| Reactions (`g5_board_good`) | one UP/DOWN per member/post with duplicate prevention |
+| Scrap (`g5_scrap`) | add/list/remove with (member, post) uniqueness and read-permission gate |
+| Feed (`g5_board_new`) | unified latest posts+comments feed with permission filtering |
+| Moderation | case open, operator actions, bulk delete/move in one transaction with summary events |
 
 ### Commerce
 
-| Legacy area | Implemented target slice |
+| Legacy area | Implemented |
 |---|---|
-| Catalog/product | product admin/list/detail with stock field |
-| Pricing/promotion | coupon and checkout quote with policy version/expiry |
-| Cart/wishlist | guest/member cart, claim, cart lines, wishlist |
-| Checkout/order | idempotent order submission with order snapshots |
-| Payment | in-memory payment authorization stub |
-| Inventory | stock adjustment and checkout stock commit/restoration on cancel |
-| Fulfillment | shipment create/dispatch and order shipped transition |
-| Review/Q&A | product review and inquiry APIs |
-| Reporting | simple sales report |
+| Categories (`g5_shop_category`) | admin category tree create/list, product assignment, per-category browsing |
+| Products/options (`g5_shop_item*`) | create/list/detail, options/variants with per-option price/stock, related products |
+| Coupons (`g5_shop_coupon`) | coupon create, quote application with policy version/expiry |
+| Cart (`g5_shop_cart`) | guest/member cart, server-priced validated lines, line quantity change/remove/select, guest claim |
+| Wishlist (`g5_shop_wish`) | add + wishlist stats in reporting |
+| Orders (`g5_shop_order*`) | idempotent submit with snapshots, state transitions (paid→preparing→shipped→completed), member list/detail, cancellation, partial cancellation with restock, return request/approval with return receipts |
+| Addresses (`g5_shop_order_address`) | address book CRUD with single default, member isolation |
+| Payment | stub adapter behind port: authorize/capture/void/refund + status; duplicate-safe command idempotency |
+| Inventory | adjustments, checkout commit/restore, reservation TTL expiry sweep, back-in-stock subscriptions (outbox event only) |
+| Fulfillment (`g5_shop_sendcost` scope partial) | shipment create/dispatch with tracking info, return receipt recording |
+| Reviews/Q&A (`g5_shop_item_use`, `g5_shop_item_qa`) | review write/list with admin approval, inquiry write + answer with secret access policy |
+| Reporting | sales by period, sales rank (net of cancel/return), wishlist stats |
 
 ## Exclusions honored
 
-- React SPA/Admin SPA implementation not included.
-- Custom template feature not implemented.
-- Real PG integrations not implemented; payment is a stub/seam.
-- Real SMS/email sending not implemented; outbox contracts exist.
-- Legacy PHP compatibility layer not implemented.
-- Legacy skin/theme runtime compatibility not implemented.
+- No React/Admin SPA, no custom templates/skins.
+- No real PG (payment gateway) integration — stub adapters + contracts only.
+- No real SMS/email delivery — outbox events and stubs only.
+- No legacy PHP compatibility layer.
+- No RSS channel adapter, no real HTML sanitizer (policy seam only), no banner/event display tracking, no Excel bulk import tooling.
 
-## Product decisions still open
+## Product decisions still open (tracked in each repo's `docs/legacy-gap-closure.md`)
 
-- Guest checkout and guest-cart merge UX beyond the current explicit claim command.
-- Suspended/withdrawn member permissions for existing posts/orders.
-- Personal data retention/anonymization for posts, orders, reviews, Q&A and logs.
-- Whether Community read/download point charging remains in scope.
-- Point earning timing and partial cancellation/return reversal order.
-- Points-provider outage UX: reject point-use checkout vs point-excluded requote.
-- Projection maximum staleness per command.
-- Quote validity duration and invalidation rules.
-- Single tenant remains the default; multi-tenant not implemented.
-
-## Coupling audit
-
-Command:
-
-```bash
-rg -n "modern-bbs-(common|community|commerce)|from ['\"].*\.\./\.\./\.\./modern-bbs" src test docs --glob '!docs/reviews/**'
-rg -n "@aws|stripe|kcp|inicis|toss|nicepay|openfga|auth0|keycloak|provider|DTO|sdk" src/domain src/application src/ports
-rg -n "TODO|FIXME" src test docs
-```
-
-Result:
-
-- No cross-service implementation imports found.
-- No provider SDK/DTO usage found in `src/domain`, `src/application`, or `src/ports`.
-- No TODO/FIXME markers found in `src`, `test`, or `docs`.
-- Expected self-identifying service names appear only in `service-info.ts` and `contracts.ts`.
+1. Guest checkout retention and guest-cart merge UX (backlog #1).
+2. Suspended-member permissions over existing posts/orders (backlog #2).
+3. Anonymization/retention scope for author names, snapshots, reviews, Q&A, logs; member export privacy scope (backlog #3).
+4. Community read/download point charging (backlog #4).
+5. Point earning timing (backlog #5).
+6. Partial cancellation/return allocation order for coupon, shipping, tax, points, refunds (backlog #6).
+7. Coupon zone / member-targeted / point-purchased coupons; personalpay policy (backlog #2-related).
+8. Membership projection maximum staleness (backlog #9); quote validity rules (backlog #10).
+9. Adjacent Community modules: memo, poll, 1:1 inquiry (backlog #12).
+10. Point grant lot expiry policy (single-balance model implemented; lot-based decision pending).
 
 ## Remaining engineering risks
 
-- Application services are currently in-memory behavioural slices. PostgreSQL repositories are not fully wired to application services yet.
-- Outbox/inbox semantics are implemented and tested, but persistent publisher/consumer workers are not production-grade.
-- OpenAPI YAML generation is deferred; current equivalent artifacts are `docs/api.md`, `docs/contracts.md` and `/capabilities`.
-- Payment, points, coupon and inventory compensation workflows are simplified stubs and need stronger process-state persistence before production.
-- `npm install` reported moderate transitive vulnerabilities during scaffold creation; dependency hardening is required before release.
+- Admin/internal endpoints are unauthenticated by scaffold policy; must be gated before any real exposure.
+- Verification codes/tokens/session ids are stored/returned in plaintext; hashing + delivery channels need a security milestone.
+- Outbox claim fencing is status-based; at-least-once duplicates are possible under extreme timing (consumers must stay idempotent).
+- Commerce: ORDERED-cart resubmission is not blocked (pre-existing since task-9, recorded); `back_in_stock_subscriptions` lacks a unique index for nullable option (rare duplicate race); partial cancel/return restores stock but computes no refund amounts (awaits decision #6).
+- Community: no cursor pagination on feed/scrap/search yet (limit caps only); group membership does not affect board visibility (documented design decision).
+- Common: legacy authz seam and sweep `now` override are in-memory/test-facing only.
+- Dependency vulnerabilities reported by `npm install` during scaffolding still require hardening before release.
 
 ## Operating notes
 
-For each service:
-
-```bash
-npm install
-npm run typecheck
-npm test
-npm run build
-npm run lint
-npm run db:generate
-npm run db:up
-DATABASE_URL=postgres://modern_bbs:modern_bbs@localhost:<port>/<db> npm run db:migrate
-npm run db:down
-npm run dev
-```
-
-Host PostgreSQL ports:
-
-- Common: `5411`, DB `modern_bbs_common`
-- Community: `5412`, DB `modern_bbs_community`
-- Commerce: `5413`, DB `modern_bbs_commerce`
+Per service: `npm install`, `npm run db:up`, `npm run db:migrate`, `npm test`, `npm run build`, `npm run dev`. Host PG ports: common 5411, community 5412, commerce 5413. `PERSISTENCE_DRIVER`/store env (see each repo's README) selects postgres vs in-memory. Docs per repo: `docs/api.md`, `docs/contracts/`, `docs/legacy-gap-closure.md`, `docs/reviews/0001–0007`.
 
 ## Conclusion
 
-The three independent backend repositories exist, build, test and migrate independently. They implement first-pass core domain workflows and canonical contract seams for the Common, Community and Commerce services while preserving the key architectural constraints: one write owner per data area, no cross-service DB access, Common usage through ports/contracts, typed domain policies, idempotency, and outbox/inbox semantics.
+All 12 goal tasks are complete. Three independent services build, test (unit + PG integration), and migrate cleanly; persistence, persistent messaging, contract artifacts, and legacy feature depth are in place; unresolved items are explicitly classified as product-undecided or excluded rather than silently dropped.
