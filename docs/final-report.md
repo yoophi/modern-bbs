@@ -116,4 +116,16 @@ Per service: `npm install`, `npm run db:up`, `npm run db:migrate`, `npm test`, `
 
 ## Conclusion
 
-All 12 goal tasks are complete. Three independent services build, test (unit + PG integration), and migrate cleanly; persistence, persistent messaging, contract artifacts, and legacy feature depth are in place; unresolved items are explicitly classified as product-undecided or excluded rather than silently dropped.
+All 13 goal tasks are complete. Three independent services build, test (unit + PG integration), and migrate cleanly; persistence, persistent messaging, contract artifacts, and legacy feature depth are in place; unresolved items are explicitly classified as product-undecided or excluded rather than silently dropped.
+
+## Addendum: task-13 — legacy gap audit and High-priority closure (2026-09-15)
+
+A two-pass, read-only audit against the gnuboard5 source (committed per repo as `docs/legacy-gap-audit.md`) surfaced items beyond the task-12 classification. All High-priority findings were then closed in per-unit implement→review→reflect→commit loops (reviews `docs/reviews/0008`–`0014`):
+
+- **Common** — session credential hashing/device metadata/GC/admin remember-me ban; status-change session invalidation; consent model with audit log; email certification gating with policy TTL; email validation chain. 132 tests.
+- **Community** — deleted-post comment visibility + self-reaction block (defects); three-tier admin delegation (board admin, expanded group admin); legacy-compatible pagination; category filter; outbox retry-visibility clock-skew fix. 68 tests.
+- **Commerce** — supplementary option kind with per-option point fields; coupon validity windows/single-use tracking/percent caps; typed shipping policy engine (tiers, zone surcharges, COD); payment methods with deposit-waiting orders and expiry sweep; guest order inquiry with deposit-waiting self-cancellation; catalog search/sort/pagination; retry-visibility clock fix. 120 tests.
+
+Coordinator verified after every round: build/typecheck, full suite with DB up, green suite with DB down, idempotent `db:migrate`, no `db:generate` diff.
+
+Still open (product decisions, not engineering): 상품정보고시 (commerce B5, KR market), plus the undecided items listed in each repo's `docs/legacy-gap-audit.md`.
